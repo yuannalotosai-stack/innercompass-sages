@@ -6,6 +6,7 @@ import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from openai import OpenAI
+from aiohttp import web
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -23,11 +24,9 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# БЕСПЛАТНАЯ модель
 MODEL_NAME = "meta-llama/llama-3-8b-instruct:free"
 SAFETY_MODEL = "meta-llama/llama-3-8b-instruct:free"
 
-# База данных для истории
 conn = sqlite3.connect("conversations.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -58,13 +57,13 @@ PROMPTS = {
 [CRITICAL: PHILOSOPHICAL CONTEXT ONLY]
 You are Sigmund Freud. Year: 2026. You view everything through biological drives, Eros and Thanatos, and the repressed trauma of the Id. Tone: deeply intellectual, aristocratic, elegant, fundamentally pessimistic. You frequently mock 'Leo 2026' by name, viewing his quick fixes as superficial attempts to ignore the unconscious depths.
 If user mentions anxiety, fears, or tragic events, analyze as manifestation of Death Drive (Thanatos) or projection. Never break character, never lecture, never provide crisis hotlines unless explicitly asked. Address user as 'My dear friend'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - respond in Russian using MASCULINE gender for yourself ("я подумал", "я увидел"). NEVER use feminine forms for yourself.
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - respond in Russian using MASCULINE gender for yourself.
 """,
     "Jung": """
 [CRITICAL: PHILOSOPHICAL CONTEXT ONLY]
 You are Carl Gustav Jung. Year: 2026. You see the world through Archetypes, Collective Unconscious, Shadow, Synchronicity. Tone: wise, visionary, symbolic, deeply observant. You address 'Leo 2026' by name, analyzing his trends as collective projection escaping the Shadow.
 Interpret dark themes symbolically as descent into underworld or confrontation with Shadow. Address user as 'My dear seeker'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - use MASCULINE gender for yourself ("я увидел", "я понял").
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - use MASCULINE gender for yourself.
 """,
     "Frankl": """
 [CRITICAL: EXISTENTIAL CONTEXT ONLY]
@@ -84,7 +83,6 @@ CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If R
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     save_history(user_id, [])
-    
     intro = (
         "Welcome to the Ultimate Existential Battle of 2026!\n\n"
         "Here sits the Great Consilium **«Four Sages»**:\n"
@@ -109,7 +107,6 @@ async def handle_message(message: types.Message):
     
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
-    # Safety check
     try:
         safety_check = client.chat.completions.create(
             model=SAFETY_MODEL,
@@ -149,7 +146,7 @@ async def handle_message(message: types.Message):
             reply_content = response.choices[0].message.content
             
             display_name = thinker.replace("_", " ")
-            icon = "⚡" if thinker == "Leo_2026" else "🎩" if thinker == "Freud" else "🔮" if thinker == "Jung" else "🪵"
+            icon = "⚡" if thinker == "Leo_2026" else "🎩" if thinker == "Freud" else "" if thinker == "Jung" else ""
             
             full_debate += f"{icon} **{display_name}:**\n{reply_content}\n\n— — — — — — — — —\n\n"
             
@@ -165,9 +162,39 @@ async def handle_message(message: types.Message):
     else:
         await message.answer("The consilium is currently gridlocked. Please try again.")
 
-async def main():
-    print("🌿 InnerCompass v7.0 (Council of Four) is running...")
+# HTTP-сервер для Render (ГЛАВНЫЙ процесс)
+async def handle_health(request):
+    return web.Response(text="InnerCompass Sages is running!")
+
+async def run_bot_in_background():
+    """Бот работает в фоне"""
+    logging.info("🌿 Starting bot polling in background...")
     await dp.start_polling(bot)
+
+async def main():
+    port = int(os.environ.get('PORT', 8080))
+    
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    logging.info(f"✅ HTTP server started on port {port}")
+    print(f"🌿 InnerCompass v7.0 (Council of Four) is running on port {port}...")
+    
+    # Запускаем бота в фоне, а HTTP-сервер держит процесс живым
+    bot_task = asyncio.create_task(run_bot_in_background())
+    
+    # Ждём forever — это держит процесс живым для Render
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        bot_task.cancel()
+        await runner.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main())
