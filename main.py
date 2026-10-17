@@ -24,8 +24,8 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-MODEL_NAME = "deepseek/deepseek-chat:free"
-SAFETY_MODEL = "deepseek/deepseek-chat:free"
+MODEL_NAME = "qwen/qwen-2.5-32b-instruct:free"
+SAFETY_MODEL = "qwen/qwen-2.5-32b-instruct:free"
 
 conn = sqlite3.connect("conversations.db", check_same_thread=False)
 cursor = conn.cursor()
