@@ -31,7 +31,7 @@ FREE_MODELS = [
     "deepseek/deepseek-chat:free",
     "google/gemma-2-9b-it:free",
     "microsoft/phi-3-mini-128k-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-8b:free"
+    "nousresearch/hermes-3-llama-3.1-8b:free",
     "openai/gpt-4o-mini"
 ]
 
