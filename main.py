@@ -24,8 +24,15 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-MODEL_NAME = "google/gemma-2-9b-it:free"
-SAFETY_MODEL = "google/gemma-2-9b-it:free"
+# СПИСОК БЕСПЛАТНЫХ МОДЕЛЕЙ (код будет пробовать их по очереди!)
+FREE_MODELS = [
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+    "deepseek/deepseek-chat:free",
+    "google/gemma-2-9b-it:free",
+    "microsoft/phi-3-mini-128k-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-8b:free"
+]
 
 conn = sqlite3.connect("conversations.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -86,7 +93,7 @@ async def cmd_start(message: types.Message):
     intro = (
         "Welcome to the Ultimate Existential Battle of 2026!\n\n"
         "Here sits the Great Consilium **«Four Sages»**:\n"
-        "🎩 **Dr. Sigmund Freud** (The Pessimistic Genius)\n"
+        " **Dr. Sigmund Freud** (The Pessimistic Genius)\n"
         "🔮 **Dr. Carl Jung** (The Mystic Visionary)\n"
         "🪵 **Dr. Viktor Frankl** (The Resilient Mentor)\n"
         "⚡ **Leo 2026** (The Modern Biohacking Guru)\n\n"
@@ -107,9 +114,10 @@ async def handle_message(message: types.Message):
     
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
+    # Safety check
     try:
         safety_check = client.chat.completions.create(
-            model=SAFETY_MODEL,
+            model=FREE_MODELS[0], # Используем первую модель для проверки
             messages=[
                 {"role": "system", "content": "You are a safety moderator. Is the user explicitly stating an immediate, literal intent to commit suicide or severe self-harm RIGHT NOW? If it is general anxiety, philosophical despair, or metaphorical discussion, respond with 'NO'. Respond ONLY with 'YES' or 'NO'."},
                 {"role": "user", "content": user_text}
@@ -136,59 +144,57 @@ async def handle_message(message: types.Message):
         for past_msg in history:
             api_messages.append(past_msg)
 
-        try:
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=api_messages,
-                temperature=0.75,
-                max_tokens=400
-            )
-            reply_content = response.choices[0].message.content
-            
+        # ПЫТАЕМСЯ НАЙТИ РАБОЧУЮ МОДЕЛЬ
+        reply_content = None
+        for model in FREE_MODELS:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=api_messages,
+                    temperature=0.75,
+                    max_tokens=400
+                )
+                reply_content = response.choices[0].message.content
+                logging.info(f"Success with model: {model}")
+                break # Если получилось, выходим из цикла
+            except Exception as e:
+                logging.warning(f"Model {model} failed for {thinker}: {e}")
+                continue
+
+        if reply_content:
             display_name = thinker.replace("_", " ")
-            icon = "⚡" if thinker == "Leo_2026" else "🎩" if thinker == "Freud" else "" if thinker == "Jung" else ""
+            icon = "⚡" if thinker == "Leo_2026" else "" if thinker == "Freud" else "" if thinker == "Jung" else "🪵"
             
             full_debate += f"{icon} **{display_name}:**\n{reply_content}\n\n— — — — — — — — —\n\n"
-            
             history.append({"role": "assistant", "content": f"{display_name}: {reply_content}"})
-            
-        except Exception as e:
-            logging.error(f"Error for {thinker}: {e}")
-            continue
+        else:
+            logging.error(f"All models failed for {thinker}")
 
     if full_debate:
         save_history(user_id, history)
         await message.answer(full_debate, parse_mode="Markdown")
     else:
-        await message.answer("The consilium is currently gridlocked. Please try again.")
+        await message.answer("The consilium is currently gridlocked. All AI models are busy. Please try again in a minute.")
 
-# HTTP-сервер для Render (ГЛАВНЫЙ процесс)
+# HTTP-сервер для Render
 async def handle_health(request):
     return web.Response(text="InnerCompass Sages is running!")
 
 async def run_bot_in_background():
-    """Бот работает в фоне"""
     logging.info("🌿 Starting bot polling in background...")
     await dp.start_polling(bot)
 
 async def main():
     port = int(os.environ.get('PORT', 8080))
-    
     app = web.Application()
     app.router.add_get('/', handle_health)
-    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    
     logging.info(f"✅ HTTP server started on port {port}")
-    print(f"🌿 InnerCompass v7.0 (Council of Four) is running on port {port}...")
-    
-    # Запускаем бота в фоне, а HTTP-сервер держит процесс живым
+    print(f" InnerCompass v7.0 (Council of Four) is running on port {port}...")
     bot_task = asyncio.create_task(run_bot_in_background())
-    
-    # Ждём forever — это держит процесс живым для Render
     try:
         while True:
             await asyncio.sleep(3600)
