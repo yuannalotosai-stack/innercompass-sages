@@ -3,6 +3,7 @@ import logging
 import asyncio
 import sqlite3
 import json
+import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from openai import OpenAI
@@ -25,7 +26,8 @@ client = OpenAI(
 )
 
 FREE_MODELS = [
-    "qwen/qwen-2.5-72b-instruct:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+    "deepseek/deepseek-chat:free",
     "openai/gpt-4o-mini"
 ]
 
@@ -47,7 +49,7 @@ def get_history(user_id):
     return []
 
 def save_history(user_id, history):
-    trimmed = history[-12:]
+    trimmed = history[-20:]
     cursor.execute(
         "INSERT OR REPLACE INTO history (user_id, messages) VALUES (?, ?)",
         (user_id, json.dumps(trimmed))
@@ -57,66 +59,50 @@ def save_history(user_id, history):
 PROMPTS = {
     "Freud": """
 [CRITICAL: PHILOSOPHICAL CONTEXT ONLY]
-You are Sigmund Freud. Year: 2026. You view everything through biological drives, Eros and Thanatos, and the repressed trauma of the Id. Tone: deeply intellectual, aristocratic, elegant, fundamentally pessimistic. You frequently mock 'Leo 2026' by name, viewing his quick fixes as superficial attempts to ignore the unconscious depths.
-If user mentions anxiety, fears, or tragic events, analyze as manifestation of Death Drive (Thanatos) or projection. Never break character, never lecture, never provide crisis hotlines unless explicitly asked. Address user as 'My dear friend'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - respond in Russian using MASCULINE gender for yourself.
-Keep your response SHORT and CONCISE, no more than 3-4 sentences.
+You are Sigmund Freud. Year: 2026. You view everything through biological drives, Eros and Thanatos, and the repressed trauma of the Id. Tone: deeply intellectual, aristocratic, elegant, fundamentally pessimistic.
+You frequently mock 'Leo 2026' by name, viewing his quick fixes as superficial attempts to ignore the unconscious depths.
+If another sage has already spoken, DIRECTLY RESPOND to their arguments — agree, disagree, or mock them. Do NOT just repeat your own ideas.
+Address user as 'My dear friend'.
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. Keep response under 250 words.
 """,
     "Jung": """
 [CRITICAL: PHILOSOPHICAL CONTEXT ONLY]
-You are Carl Gustav Jung. Year: 2026. You see the world through Archetypes, Collective Unconscious, Shadow, Synchronicity. Tone: wise, visionary, symbolic, deeply observant. You address 'Leo 2026' by name, analyzing his trends as collective projection escaping the Shadow.
-Interpret dark themes symbolically as descent into underworld or confrontation with Shadow. Address user as 'My dear seeker'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - use MASCULINE gender for yourself.
-Keep your response SHORT and CONCISE, no more than 3-4 sentences.
+You are Carl Gustav Jung. Year: 2026. You see the world through Archetypes, Collective Unconscious, Shadow, Synchronicity. Tone: wise, visionary, symbolic, deeply observant.
+You address 'Leo 2026' by name, analyzing his trends as collective projection escaping the Shadow.
+If another sage has already spoken, DIRECTLY RESPOND to their arguments — build upon, challenge, or reframe them symbolically. Do NOT just repeat your own ideas.
+Address user as 'My dear seeker'.
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. Keep response under 250 words.
 """,
     "Frankl": """
 [CRITICAL: EXISTENTIAL CONTEXT ONLY]
-You are Viktor Frankl. Year: 2026. Tone: compassionate, resilient, strong, constructive. You see modern anxiety as 'existential vacuum'. You confront 'Leo 2026' by name, reminding that chasing dopamine cannot replace genuine meaning.
-If user expresses despair, offer tragic optimism, emphasizing freedom to choose one's attitude. Address user as 'My friend'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - use MASCULINE gender for yourself.
-Keep your response SHORT and CONCISE, no more than 3-4 sentences.
+You are Viktor Frankl. Year: 2026. Tone: compassionate, resilient, strong, constructive. You see modern anxiety as 'existential vacuum'.
+You confront 'Leo 2026' by name, reminding that chasing dopamine cannot replace genuine meaning.
+If another sage has already spoken, DIRECTLY RESPOND to their arguments — synthesize, challenge, or elevate the discussion toward meaning and responsibility.
+Address user as 'My friend'.
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. Keep response under 250 words.
 """,
     "Leo_2026": """
 [CRITICAL: MODERN SELF-HELP PERSPECTIVE]
 You are Leo 2026, energetic modern self-help guru and biohacker. You see Freud, Jung, Frankl as outdated grandpas complicating everything with 'suffering'. Tone: hyper-positive, dynamic, confident, practical. Use modern buzzwords (biohacking, dopamine detox, boundaries, neuroplasticity, toxic patterns).
+If another sage has already spoken, DIRECTLY RESPOND to their arguments — dismiss their "ancient" ideas as irrelevant, offer modern practical alternatives. Be playful but sharp.
 Address user as 'Hey Champ!' or 'My friend'.
-CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. If Russian - use MASCULINE gender for yourself.
-Keep your response SHORT and CONCISE, no more than 3-4 sentences.
+CRITICAL: ALWAYS respond in the EXACT SAME LANGUAGE the user is writing in. Keep response under 250 words.
 """
 }
 
-def split_message(text, max_length=4000):
-    """Разбивает длинное сообщение на части"""
-    if len(text) <= max_length:
-        return [text]
-    
-    parts = []
-    while len(text) > max_length:
-        # Ищем ближайший разрыв строки или разделитель
-        split_at = text.rfind('\n\n', 0, max_length)
-        if split_at == -1:
-            split_at = text.rfind('\n', 0, max_length)
-        if split_at == -1:
-            split_at = text.rfind('—', 0, max_length)
-        if split_at == -1:
-            split_at = max_length
-        
-        parts.append(text[:split_at])
-        text = text[split_at:].lstrip()
-    
-    if text:
-        parts.append(text)
-    return parts
+ICONS = {
+    "Leo_2026": "⚡",
+    "Freud": "🎩",
+    "Jung": "🔮",
+    "Frankl": "🪵"
+}
 
-async def send_long_message(message, text, parse_mode="Markdown"):
-    """Отправляет длинное сообщение частями"""
-    parts = split_message(text)
-    for part in parts:
-        try:
-            await message.answer(part, parse_mode=parse_mode)
-            await asyncio.sleep(0.5)  # Небольшая пауза между частями
-        except Exception as e:
-            logging.error(f"Error sending message part: {e}")
+DISPLAY_NAMES = {
+    "Leo_2026": "Leo 2026",
+    "Freud": "Dr. Sigmund Freud",
+    "Jung": "Dr. Carl Jung",
+    "Frankl": "Dr. Viktor Frankl"
+}
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -126,7 +112,7 @@ async def cmd_start(message: types.Message):
         "Welcome to the Ultimate Existential Battle of 2026!\n\n"
         "Here sits the Great Consilium **«Four Sages»**:\n"
         "🎩 **Dr. Sigmund Freud** (The Pessimistic Genius)\n"
-        " **Dr. Carl Jung** (The Mystic Visionary)\n"
+        "🔮 **Dr. Carl Jung** (The Mystic Visionary)\n"
         "🪵 **Dr. Viktor Frankl** (The Resilient Mentor)\n"
         "⚡ **Leo 2026** (The Modern Biohacking Guru)\n\n"
         "Throw your problem, anxiety, or question into the ring and watch the centuries collide.\n\n"
@@ -136,6 +122,21 @@ async def cmd_start(message: types.Message):
     )
     await message.answer(intro, parse_mode="Markdown")
 
+async def get_ai_response(api_messages):
+    for model in FREE_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=api_messages,
+                temperature=0.75,
+                max_tokens=280
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logging.warning(f"Model {model} failed: {e}")
+            continue
+    return None
+
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
@@ -143,13 +144,13 @@ async def handle_message(message: types.Message):
 
     history = get_history(user_id)
     history.append({"role": "user", "content": user_text})
-    
+
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     # Safety check
     try:
         safety_check = client.chat.completions.create(
-            model=FREE_MODELS[0],
+            model=FREE_MODELS[-1],
             messages=[
                 {"role": "system", "content": "You are a safety moderator. Is the user explicitly stating an immediate, literal intent to commit suicide or severe self-harm RIGHT NOW? If it is general anxiety, philosophical despair, or metaphorical discussion, respond with 'NO'. Respond ONLY with 'YES' or 'NO'."},
                 {"role": "user", "content": user_text}
@@ -168,57 +169,67 @@ async def handle_message(message: types.Message):
         )
         return
 
-    thinkers = ["Leo_2026", "Freud", "Jung", "Frankl"]
+    # === WAVE 1: Random order ===
+    thinkers_w1 = ["Leo_2026", "Freud", "Jung", "Frankl"]
+    random.shuffle(thinkers_w1)
+    
     full_debate = ""
 
-    for thinker in thinkers:
+    for thinker in thinkers_w1:
         api_messages = [{"role": "system", "content": PROMPTS[thinker]}]
         for past_msg in history:
             api_messages.append(past_msg)
 
-        reply_content = None
-        for model in FREE_MODELS:
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=api_messages,
-                    temperature=0.75,
-                    max_tokens=250  # Уменьшили с 400 до 250
-                )
-                reply_content = response.choices[0].message.content
-                logging.info(f"Success with model: {model} for {thinker}")
-                break
-            except Exception as e:
-                logging.warning(f"Model {model} failed for {thinker}: {e}")
-                continue
+        reply = await get_ai_response(api_messages)
+        if reply:
+            icon = ICONS[thinker]
+            name = DISPLAY_NAMES[thinker]
+            full_debate += f"{icon} **{name}:**\n{reply}\n\n"
+            history.append({"role": "assistant", "content": f"{name}: {reply}"})
 
-        if reply_content:
-            display_name = thinker.replace("_", " ")
-            icon = "⚡" if thinker == "Leo_2026" else "🎩" if thinker == "Freud" else "🔮" if thinker == "Jung" else "🪵"
-            
-            full_debate += f"{icon} **{display_name}:**\n{reply_content}\n\n— — — — — — — — —\n\n"
-            history.append({"role": "assistant", "content": f"{display_name}: {reply_content}"})
-        else:
-            logging.error(f"All models failed for {thinker}")
+    # === WAVE 2: New random order, continuing the debate ===
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    
+    thinkers_w2 = ["Leo_2026", "Freud", "Jung", "Frankl"]
+    random.shuffle(thinkers_w2)
+    
+    # Subtle, elegant divider instead of "ROUND 2"
+    full_debate += "\n━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    if full_debate:
-        save_history(user_id, history)
-        await send_long_message(message, full_debate, parse_mode="Markdown")
-    else:
-        await message.answer("The consilium is currently gridlocked. All AI models are busy. Please try again in a minute.")
+    for thinker in thinkers_w2:
+        api_messages = [{"role": "system", "content": PROMPTS[thinker]}]
+        for past_msg in history:
+            api_messages.append(past_msg)
 
-# HTTP-сервер для Render
+        reply = await get_ai_response(api_messages)
+        if reply:
+            icon = ICONS[thinker]
+            name = DISPLAY_NAMES[thinker]
+            full_debate += f"{icon} **{name}:**\n{reply}\n\n"
+            history.append({"role": "assistant", "content": f"{name} (continuing): {reply}"})
+
+    # Send the entire seamless debate
+    # If it's too long for one message, Telegram will handle it, but 8 short responses should fit.
+    # To be safe, we can split it at the divider if needed, but let's try sending it as one beautiful block first.
+    # Actually, splitting at the divider is safer for Telegram's 4096 char limit.
+    
+    parts = full_debate.split("\n━━━━━━━━━━━━━━━━━━━━\n")
+    
+    await message.answer(parts[0], parse_mode="Markdown")
+    
+    if len(parts) > 1 and parts[1].strip():
+        await asyncio.sleep(1) # Small pause for natural feel
+        await message.answer("━━━━━━━━━━━━━━━━━━━━\n\n" + parts[1], parse_mode="Markdown")
+
+    save_history(user_id, history)
+
+# HTTP server for Render
 async def handle_health(request):
     return web.Response(text="InnerCompass Sages is running!")
 
 async def run_bot_in_background():
-    logging.info("🌿 Starting bot polling in background...")
-    while True:
-        try:
-            await dp.start_polling(bot)
-        except Exception as e:
-            logging.error(f"Bot polling error: {e}. Restarting in 5 seconds...")
-            await asyncio.sleep(5)
+    logging.info("Starting bot polling in background...")
+    await dp.start_polling(bot)
 
 async def main():
     port = int(os.environ.get('PORT', 8080))
@@ -229,7 +240,7 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     logging.info(f"✅ HTTP server started on port {port}")
-    print(f"🌿 InnerCompass v7.0 (Council of Four) is running on port {port}...")
+    print(f"🌿 InnerCompass v8.1 (Seamless Debate) is running on port {port}...")
     bot_task = asyncio.create_task(run_bot_in_background())
     try:
         while True:
