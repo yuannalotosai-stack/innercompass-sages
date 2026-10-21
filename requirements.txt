@@ -2,3 +2,4 @@ aiogram
 openai
 aiohttp
 Pillow
+requests
